@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# inferbook
-=======
 # InferBook
 
 This folder contains utility scripts. Below are instructions to use the InferBook scraper.
