@@ -2,7 +2,7 @@
 
 This folder contains utility scripts. Below are instructions to use the InferBook scraper.
 
-## inferbook/scraper.py
+## inferbook/src/scraper.py
 
 Scrapes bookmarked pages from an exported bookmarks HTML file and optionally generates sentence embeddings.
 
@@ -22,7 +22,7 @@ pip install requests beautifulsoup4 sentence-transformers tqdm
 
 ### Usage
 ```bash
-python pscripts/inferbook/scraper.py [--save {text,embeddings}] [--bookmarks PATH]
+python src/scraper.py [--save {text,embeddings}] [--bookmarks PATH]
 ```
 
 - **--save**: Choose output mode. Defaults to `embeddings`.
@@ -33,22 +33,22 @@ python pscripts/inferbook/scraper.py [--save {text,embeddings}] [--bookmarks PAT
 ### Examples
 - Save only text:
 ```bash
-python pscripts/inferbook/scraper.py --save text --bookmarks pscripts/inferbook/bookmarks_24_04_2025.html
+python src/scraper.py --save text --bookmarks htmls/bookmarks_24_04_2025.html
 ```
 
 - Save text and embeddings (default):
 ```bash
-python pscripts/inferbook/scraper.py --save embeddings --bookmarks pscripts/inferbook/bookmarks_24_04_2025.html
+python src/scraper.py --save embeddings --bookmarks htmls/bookmarks_24_04_2025.html
 ```
 
 ### Outputs
 For each tab collection processed (e.g., `tab_collection1`, `tab_collection2`):
 - When `--save text`:
-  - `scraped_data_text_tab_collection1.json`
-  - `scraped_data_text_tab_collection2.json`
+  - `data/scraped_data_text_tab_collection1.json`
+  - `data/scraped_data_text_tab_collection2.json`
 - When `--save embeddings`:
-  - `scraped_data_with_embeddings_tab_collection1.json`
-  - `scraped_data_with_embeddings_tab_collection2.json`
+  - `data/scraped_data_with_embeddings_tab_collection1.json`
+  - `data/scraped_data_with_embeddings_tab_collection2.json`
 
 Each JSON maps URL to an object containing:
 - `title`: Page title
@@ -57,4 +57,4 @@ Each JSON maps URL to an object containing:
 
 ### Logs
 - Operational logs: `inferbook.log`
-- Network errors: `error.log` 
+- Network and Scraping errors: `error.log` 
