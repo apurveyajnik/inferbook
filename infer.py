@@ -2,10 +2,15 @@ import json
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+import glob
 
-def load_articles_with_embeddings(path):
-    with open(path, 'r') as f:
-        data = json.load(f)
+def load_articles_with_embeddings(folder):
+    paths =glob.glob(folder + "/*embedding*.json")
+    data = {}
+    for path in paths:
+        print(path)
+        with open(path, 'r') as f:
+            data.update(json.load(f))
     return data
 
 def embed_text(text, model):
@@ -32,7 +37,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Search best matched articles by embedding similarity.")
     parser.add_argument("input_text", type=str, help="Input text to search for similar articles.")
-    parser.add_argument("--data", type=str, default="scraped_data_with_embeddings.json", help="Path to JSON file.")
+    parser.add_argument("--data", type=str, default="./data", help="Path to JSON file.")
     parser.add_argument("--top_k", type=int, default=5, help="Number of top matches to return.")
     args = parser.parse_args()
     model = SentenceTransformer('all-MiniLM-L6-v2')
