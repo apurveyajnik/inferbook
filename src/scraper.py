@@ -7,6 +7,7 @@ import functools
 import os
 from tqdm import tqdm
 import argparse
+import chromadb
 
 # Configure logging
 logging.basicConfig(
@@ -67,6 +68,103 @@ def scrape_data(url):
 def create_embeddings(texts, model):
     logger.info(f"Creating embeddings for {len(texts)} texts")
     return model.encode(texts)
+
+
+def _results_embed_to_lists(results_embed):
+    """
+    Convert results_embed dict into parallel lists suitable for ChromaDB.
+
+    Returns (ids, documents, embeddings, metadatas) where:
+      - ids: list of URL strings
+      - documents: list of strings "title\n\ntext"
+      - embeddings: list of embedding vectors (lists of floats)
+      - metadatas: per-item metadata dicts
+    """
+    ids, embeddings, documents, metadatas = [], [], [], []
+    for url, item in results_embed.items():
+        embedding = item.get("embedding")
+        if embedding is None:
+            logger.warning(f"Missing embedding for URL {url}; skipping.")
+            continue
+
+        title = item.get("title", "")
+        text = item.get("text", "")
+
+        ids.append(url)
+        embeddings.append(embedding[0])
+        # Combine title and text to form a richer document string
+        documents.append(f"{title}\n\n{text}".strip())
+        metadatas.append({
+            "title": title,
+            "folder_path": item.get("folder_path", ""),
+            "url": url,
+        })
+
+    return ids, documents, embeddings, metadatas
+
+
+@log_function_call
+def save_embeddings_to_chroma(results_embed, collection_name, persist_directory="chroma_db"):
+    """
+    Save a dictionary of embeddings to a local ChromaDB collection.
+
+    results_embed format (per URL key):
+    {
+        url: {
+            'title': str,
+            'text': str,
+            'folder_path': str,
+            'embedding': List[float]
+        }
+    }
+    """
+    logger.info(
+        f"Saving {len(results_embed)} embeddings to ChromaDB collection='{collection_name}' "
+        f"at path='{persist_directory}'"
+    )
+
+    ids, documents, embeddings, metadatas = _results_embed_to_lists(results_embed)
+    if not ids:
+        logger.info("No valid embeddings to save to ChromaDB.")
+        return
+
+    client = chromadb.PersistentClient(path=persist_directory)
+    collection = client.get_or_create_collection(name=collection_name)
+    import pdb; pdb.set_trace()
+    collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        documents=documents,
+        metadatas=metadatas,
+    )
+    logger.info(
+        f"Successfully saved {len(ids)} embeddings to ChromaDB collection='{collection_name}'."
+    )
+
+
+@log_function_call
+def save_embeddings_file_to_chroma(embeddings_json_path, collection_name, persist_directory="chroma_db"):
+    """
+    Load embeddings from a JSON file on disk and store them into a ChromaDB collection.
+
+    This is useful if embeddings were previously generated and saved to file.
+    """
+    logger.info(
+        f"Loading embeddings from file '{embeddings_json_path}' into "
+        f"ChromaDB collection='{collection_name}' at path='{persist_directory}'"
+    )
+    if not os.path.exists(embeddings_json_path):
+        logger.error(f"Embeddings file not found: {embeddings_json_path}")
+        raise FileNotFoundError(f"Embeddings file not found: {embeddings_json_path}")
+
+    with open(embeddings_json_path, "r") as f:
+        results_embed = json.load(f)
+    if not isinstance(results_embed, dict):
+        logger.error("Embeddings file must contain a JSON object/dict.")
+        raise ValueError("Embeddings file must contain a JSON object/dict.")
+    
+
+    save_embeddings_to_chroma(results_embed, collection_name, persist_directory)
 
 
 def _build_tree_from_dl(dl_element, tree):
@@ -191,6 +289,25 @@ if __name__ == "__main__":
             default="bookmarks_24_04_2025.html",
             help="Path to the bookmarks HTML file."
         )
+        parser.add_argument(
+            "--output-destination",
+            choices=["file", "chroma", "both"],
+            default="file",
+            help=(
+                "Where to save embeddings when in 'embeddings' mode: "
+                "'file' (JSON on disk), 'chroma' (ChromaDB only), or 'both'."
+            ),
+        )
+        parser.add_argument(
+            "--chroma-dir",
+            default="chroma_db",
+            help="Directory where the local ChromaDB persistent store will be created/used.",
+        )
+        parser.add_argument(
+            "--chroma-collection-prefix",
+            default="inferbook",
+            help="Prefix for ChromaDB collection names; actual name will be '<prefix>_<collection_name>'.",
+        )
         args = parser.parse_args()
 
         save_mode = args.save  # 'text' or 'embeddings'
@@ -203,19 +320,20 @@ if __name__ == "__main__":
 
         # Load the bookmarks HTML file
         logger.info("Loading bookmarks file")
-        with open(args.bookmarks, 'r') as file:
+        with open("htmls/" + args.bookmarks, 'r') as file:
             bookmarks_html = file.read()
 
         # Parse the HTML content
         soup = BeautifulSoup(bookmarks_html, 'lxml')
 
         # Process both tab collections
-        collections = ['tabs']
+        collections = ['tab_collection1']
         
         for collection_name in collections:
-            text_filename = f"scraped_data_text_{collection_name}.json"
-            embed_filename = f"scraped_data_with_embeddings_{collection_name}.json"
-            tree_filename = f"bookmarks_tree_{collection_name}.json"
+            text_filename = f"data/scraped_data_text_{collection_name}.json"
+            embed_filename = f"data/scraped_data_with_embeddings_{collection_name}.json"
+            tree_filename = f"data/bookmarks_tree_{collection_name}.json"
+            chroma_collection_name = f"{args.chroma_collection_prefix}_{collection_name}"
 
             # Build nested tree and flat entries with folder paths
             folder_tree, entries = process_tab_collection(soup, collection_name)
@@ -252,8 +370,25 @@ if __name__ == "__main__":
 
             # Embeddings mode
             if os.path.exists(embed_filename):
-                logger.info(f"Skipping {collection_name} - embeddings JSON already exists: {embed_filename}")
-                print(f"Skipping {collection_name} - embeddings already exist in '{embed_filename}'.")
+                logger.info(f"Embeddings JSON already exists for {collection_name}: {embed_filename}")
+                print(f"Embeddings already exist for '{collection_name}' in '{embed_filename}'.")
+
+                # If the user wants embeddings in Chroma, load them from the existing file.
+                if args.output_destination in ("chroma", "both"):
+                    logger.info(
+                        f"Saving existing embeddings for {collection_name} from file to ChromaDB collection "
+                        f"'{chroma_collection_name}' at '{args.chroma_dir}'."
+                    )
+                    save_embeddings_file_to_chroma(
+                        embed_filename,
+                        chroma_collection_name,
+                        args.chroma_dir,
+                    )
+                    print(
+                        f"Existing embeddings for '{collection_name}' loaded into "
+                        f"ChromaDB collection '{chroma_collection_name}'."
+                    )
+                # Skip recomputing embeddings if they already exist on disk.
                 continue
 
             # Ensure text data exists; load or create it
@@ -283,6 +418,7 @@ if __name__ == "__main__":
 
             # Create embeddings based on text data
             logger.info(f"Starting embeddings generation for {collection_name}")
+            
             results_embed = {}
             for url, item in tqdm(results_text.items(), desc=f"Processing {collection_name} (embeddings)"):
                 combined_text = item.get('text', '')
@@ -294,10 +430,28 @@ if __name__ == "__main__":
                     'embedding': embedding.tolist()
                 }
 
-            logger.info(f"Saving embeddings results to {embed_filename}")
-            with open(embed_filename, 'w') as f:
-                json.dump(results_embed, f, indent=4)
-            print(f"Completed {collection_name}. Embeddings saved to '{embed_filename}'.")
+            # Save embeddings to requested destinations
+            if args.output_destination in ("file", "both"):
+                logger.info(f"Saving embeddings results to {embed_filename}")
+                with open(embed_filename, 'w') as f:
+                    json.dump(results_embed, f, indent=4)
+                print(f"Completed {collection_name}. Embeddings saved to '{embed_filename}'.")
+
+            if args.output_destination in ("chroma", "both"):
+                logger.info(
+                    f"Saving embeddings for {collection_name} to ChromaDB collection "
+                    f"'{chroma_collection_name}' at '{args.chroma_dir}'."
+                )
+                
+                save_embeddings_to_chroma(
+                    results_embed,
+                    chroma_collection_name,
+                    args.chroma_dir,
+                )
+                print(
+                    f"Completed {collection_name}. Embeddings saved to ChromaDB collection "
+                    f"'{chroma_collection_name}'."
+                )
 
         logger.info("Scraping and embedding completed successfully")
         print("Processing completed for all collections.")
