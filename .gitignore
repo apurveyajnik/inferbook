@@ -1,7 +1,10 @@
 *.json
 *.log
-config*
 *.html
+*.ipynb
 data/*
 htmls/*
 chroma_db/*
+config.toml
+*/__pycache__/*
+.env

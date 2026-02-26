@@ -5,6 +5,7 @@ This folder contains a module for scraping bookmarked pages, generating embeddin
 Below are instructions for:
 - `src/scraper.py`: scrape bookmarks, build text JSON, and optionally create/store embeddings.
 - `src/infer.py`: query the generated embeddings (from JSON files or ChromaDB).
+- `src/chat.py`: chat interface with sources from bookmarks
 
 ## inferbook/src/scraper.py
 
@@ -30,8 +31,6 @@ python src/scraper.py \
   [--save {text,embeddings}] \
   [--bookmarks FILENAME] \
   [--output-destination {file,chroma,both}] \
-  [--chroma-dir DIR] \
-  [--chroma-folder-prefix PREFIX]
 ```
 
 - **--save**: Choose output mode. Defaults to `embeddings`.
@@ -44,11 +43,7 @@ python src/scraper.py \
   - `file`: Save embeddings JSON to disk only.
   - `chroma`: Store embeddings only in a local ChromaDB folder.
   - `both`: Save to JSON and also store in ChromaDB.
-- **--chroma-dir**: Directory for the local ChromaDB persistent store.  
-  Default: `chroma_db`.
-- **--chroma-folder-prefix**: Prefix for ChromaDB folder names.  
-  Actual folder used is `<prefix>_<folder_name>` (e.g., `inferbook_tab_sample_folder1`).  
-  Default: `inferbook`.
+
 
 ### Examples
 - Save only text:
@@ -75,8 +70,6 @@ python src/scraper.py \
   --save embeddings \
   --bookmarks bookmarks_%d_%m_%YYYY.html \
   --output-destination both \
-  --chroma-dir my_chroma_db \
-  --chroma-folder-prefix my_inferbook
 ```
 
 ### Outputs
@@ -108,8 +101,6 @@ python src/infer.py \
   "your query text here" \
   [--backend {file,chroma}] \
   [--data DATA_DIR] \
-  [--chroma-dir DIR] \
-  [--chroma-folder NAME] \
   [--top_k N]
 ```
 
@@ -120,15 +111,11 @@ python src/infer.py \
   - `chroma`: Queries a ChromaDB folder in `--chroma-dir`.
 - **--data**: Directory containing embeddings JSON files (used when `--backend file`).  
   Default: `./data`.
-- **--chroma-dir**: Directory where the local ChromaDB persistent store lives (used when `--backend chroma`).  
-  Default: `chroma_db`.
-- **--chroma-folder**: ChromaDB folder name to query (used when `--backend chroma`).  
-  Default: `inferbook_tab_folder1`.
 - **--top_k**: Number of top matches to return.  
   Default: `5`.
 
 ### Examples
-- Search using JSON embeddings on disk:
+- Search using JSON embedding files:
 ```bash
 python src/infer.py "how to creat a bookmark search and chat" \
   --backend file \
@@ -136,13 +123,16 @@ python src/infer.py "how to creat a bookmark search and chat" \
   --top_k 5
 ```
 
-- Search using a ChromaDB folder:
+- Search using a ChromaDB:
 ```bash
 python src/infer.py "how to create a bookmark search and chat" \
   --backend chroma \
-  --chroma-dir chroma_db \
-  --chroma-folder inferbook_tab_folder1 \
   --top_k 5
 ```
 
 The script prints ranked matches with similarity scores, titles, and URLs.
+
+- Chat interface that presents responses using sources from bookmarks:
+```bash
+python src/chat.py
+```

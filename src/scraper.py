@@ -1,23 +1,17 @@
 import requests
 from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
-import logging
 import json
 import functools
 import os
 from tqdm import tqdm
 import argparse
 import chromadb
+import ollama
+from config import config, logger
+from constants import ModelSources, ModelEmbeddingHF, ModelEmbeddingOllama, OutputDestination
 
-# Configure logging
-logging.basicConfig(
-    filename='inferbook.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 
-logger = logging.getLogger('inferbook')
 
 # Decorator to log function calls
 def log_function_call(func):
@@ -65,9 +59,14 @@ def scrape_data(url):
     
 
 @log_function_call
-def create_embeddings(texts, model):
+def create_embeddings(texts, model, model_name):
     logger.info(f"Creating embeddings for {len(texts)} texts")
-    return model.encode(texts)
+    if model is not None and config['EMBEDDING_MODEL_SOURCE'] == ModelSources.hugging_face.value:
+        return model.encode(texts)
+    elif config['EMBEDDING_MODEL_SOURCE'] == ModelSources.ollama.value:
+        return ollama.embed(model=model_name, text=texts)
+    else:
+        raise ValueError(f"Unsupported embedding model source: {config['EMBEDDING_MODEL_SOURCE']}")
 
 
 def _results_embed_to_lists(results_embed):
@@ -291,7 +290,7 @@ if __name__ == "__main__":
         )
         parser.add_argument(
             "--output-destination",
-            choices=["file", "chroma", "both"],
+            choices=[OutputDestination.FILE.value, OutputDestination.CHROMA.value, OutputDestination.BOTH.value],
             default="file",
             help=(
                 "Where to save embeddings when in 'embeddings' mode: "
@@ -308,6 +307,15 @@ if __name__ == "__main__":
             default="inferbook",
             help="Prefix for ChromaDB collection names; actual name will be '<prefix>_<collection_name>'.",
         )
+        parser.add_argument(
+            "--tab-folders",
+            nargs="+",
+            default=["tab_sample_folder1"],
+            help=(
+                "One or more top-level tab folder headings in the bookmarks HTML file "
+                "to process (e.g. 'tab_sample_folder1')."
+            ),
+        )
         args = parser.parse_args()
 
         save_mode = args.save  # 'text' or 'embeddings'
@@ -316,7 +324,15 @@ if __name__ == "__main__":
         model = None
         if save_mode == "embeddings":
             logger.info("Loading embedding model")
-            model = SentenceTransformer('all-MiniLM-L6-v2')
+            if config['EMBEDDING_MODEL_SOURCE'] == ModelSources.hugging_face.value:
+                model_name = ModelEmbeddingHF.ALL_MINI_LM_L6_V2.value
+                model = SentenceTransformer(model_name)
+            elif config['EMBEDDING_MODEL_SOURCE'] == ModelSources.ollama.value:
+                model_name = ModelEmbeddingOllama.ALL_MINI_LM_L6_V2.value
+                model = None # model_name added as string in ollama.embed function
+                ollama.pull(model_name)
+            else:
+                raise ValueError(f"Unsupported embedding model source: {config['EMBEDDING_MODEL_SOURCE']}")
 
         # Load the bookmarks HTML file
         logger.info("Loading bookmarks file")
@@ -326,17 +342,17 @@ if __name__ == "__main__":
         # Parse the HTML content
         soup = BeautifulSoup(bookmarks_html, 'lxml')
 
-        # Process both tab collections
-        collections = ['tab_collection1']
-        
-        for collection_name in collections:
-            text_filename = f"data/scraped_data_text_{collection_name}.json"
-            embed_filename = f"data/scraped_data_with_embeddings_{collection_name}.json"
-            tree_filename = f"data/bookmarks_tree_{collection_name}.json"
-            chroma_collection_name = f"{args.chroma_collection_prefix}_{collection_name}"
+        # Process specified tab folders (folders)
+        folders = args.tab_folders
+
+        for folder in folders:
+            text_filename = f"data/scraped_data_text_{folder}.json"
+            embed_filename = f"data/scraped_data_with_embeddings_{folder}.json"
+            tree_filename = f"data/bookmarks_tree_{folder}.json"
+            chroma_collection_name = config['CHROMA_COLLECTION_NAME']
 
             # Build nested tree and flat entries with folder paths
-            folder_tree, entries = process_tab_collection(soup, collection_name)
+            folder_tree, entries = process_tab_collection(soup, folder)
 
             # Save the tree for inspection
             with open(tree_filename, 'w') as tf:
@@ -344,14 +360,14 @@ if __name__ == "__main__":
 
             # Print a brief summary
             if entries:
-                print(f"Found {len(entries)} links under '{collection_name}'.")
+                print(f"Found {len(entries)} links under '{folder}'.")
             else:
-                print(f"No links found for {collection_name}.")
+                print(f"No links found for {folder}.")
 
             if save_mode == "text":
-                logger.info(f"Starting text-only processing for {collection_name}")
+                logger.info(f"Starting text-only processing for {folder}")
                 results_text = {}
-                for entry in tqdm(entries, desc=f"Processing {collection_name} (text)"):
+                for entry in tqdm(entries, desc=f"Processing {folder} (text)"):
                     url = entry['url'].strip()
                     logger.info(f"Processing URL: {url}")
                     data = scrape_data(url)
@@ -365,18 +381,18 @@ if __name__ == "__main__":
                 logger.info(f"Saving text results to {text_filename}")
                 with open(text_filename, 'w') as f:
                     json.dump(results_text, f, indent=4)
-                print(f"Completed {collection_name}. Text results saved to '{text_filename}'.")
+                print(f"Completed {folder}. Text results saved to '{text_filename}'.")
                 continue
 
             # Embeddings mode
             if os.path.exists(embed_filename):
-                logger.info(f"Embeddings JSON already exists for {collection_name}: {embed_filename}")
-                print(f"Embeddings already exist for '{collection_name}' in '{embed_filename}'.")
+                logger.info(f"Embeddings JSON already exists for {folder}: {embed_filename}")
+                print(f"Embeddings already exist for '{folder}' in '{embed_filename}'.")
 
                 # If the user wants embeddings in Chroma, load them from the existing file.
-                if args.output_destination in ("chroma", "both"):
+                if args.output_destination in (OutputDestination.CHROMA.value, OutputDestination.BOTH.value):
                     logger.info(
-                        f"Saving existing embeddings for {collection_name} from file to ChromaDB collection "
+                        f"Saving existing embeddings for {folder} from file to ChromaDB collection "
                         f"'{chroma_collection_name}' at '{args.chroma_dir}'."
                     )
                     save_embeddings_file_to_chroma(
@@ -385,7 +401,7 @@ if __name__ == "__main__":
                         args.chroma_dir,
                     )
                     print(
-                        f"Existing embeddings for '{collection_name}' loaded into "
+                        f"Existing embeddings for '{folder}' loaded into "
                         f"ChromaDB collection '{chroma_collection_name}'."
                     )
                 # Skip recomputing embeddings if they already exist on disk.
@@ -398,9 +414,9 @@ if __name__ == "__main__":
                 with open(text_filename, 'r') as f:
                     results_text = json.load(f)
             else:
-                logger.info(f"Text data not found for {collection_name}. Creating text JSON first: {text_filename}")
+                logger.info(f"Text data not found for {folder}. Creating text JSON first: {text_filename}")
                 results_text = {}
-                for entry in tqdm(entries, desc=f"Processing {collection_name} (prepare text)"):
+                for entry in tqdm(entries, desc=f"Processing {folder} (prepare text)"):
                     url = entry['url'].strip()
                     logger.info(f"Processing URL: {url}")
                     data = scrape_data(url)
@@ -414,15 +430,15 @@ if __name__ == "__main__":
                 logger.info(f"Saving generated text results to {text_filename}")
                 with open(text_filename, 'w') as f:
                     json.dump(results_text, f, indent=4)
-                print(f"Prepared text data for {collection_name} at '{text_filename}'.")
+                print(f"Prepared text data for {folder} at '{text_filename}'.")
 
             # Create embeddings based on text data
-            logger.info(f"Starting embeddings generation for {collection_name}")
+            logger.info(f"Starting embeddings generation for {folder}")
             
             results_embed = {}
-            for url, item in tqdm(results_text.items(), desc=f"Processing {collection_name} (embeddings)"):
+            for url, item in tqdm(results_text.items(), desc=f"Processing {folder} (embeddings)"):
                 combined_text = item.get('text', '')
-                embedding = create_embeddings([combined_text], model)
+                embedding = create_embeddings([combined_text], model, model_name)
                 results_embed[url] = {
                     'title': item.get('title', ''),
                     'text': combined_text,
@@ -431,15 +447,15 @@ if __name__ == "__main__":
                 }
 
             # Save embeddings to requested destinations
-            if args.output_destination in ("file", "both"):
+            if args.output_destination in (OutputDestination.FILE.value, OutputDestination.BOTH.value):
                 logger.info(f"Saving embeddings results to {embed_filename}")
                 with open(embed_filename, 'w') as f:
                     json.dump(results_embed, f, indent=4)
-                print(f"Completed {collection_name}. Embeddings saved to '{embed_filename}'.")
+                print(f"Completed {folder}. Embeddings saved to '{embed_filename}'.")
 
-            if args.output_destination in ("chroma", "both"):
+            if args.output_destination in (OutputDestination.CHROMA.value, OutputDestination.BOTH.value):
                 logger.info(
-                    f"Saving embeddings for {collection_name} to ChromaDB collection "
+                    f"Saving embeddings for {folder} to ChromaDB collection "
                     f"'{chroma_collection_name}' at '{args.chroma_dir}'."
                 )
                 
@@ -449,7 +465,7 @@ if __name__ == "__main__":
                     args.chroma_dir,
                 )
                 print(
-                    f"Completed {collection_name}. Embeddings saved to ChromaDB collection "
+                    f"Completed {folder}. Embeddings saved to ChromaDB collection "
                     f"'{chroma_collection_name}'."
                 )
 
