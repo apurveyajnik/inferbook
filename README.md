@@ -142,6 +142,6 @@ python src/chat.py
 
 
 ## TODO
-- Add support for reading local files
-This should be simpler as no scraping is required.
-- 
+- Add support for reading local files. This should be simpler as no scraping is required.
+- Analytics for the collections of docs and bookmarks.
+- Create categorised nodes (filing cabinet) for bookmarks and docs to create other ways of access apart from search.
