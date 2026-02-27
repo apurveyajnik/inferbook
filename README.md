@@ -7,22 +7,25 @@ Below are instructions for:
 - `src/infer.py`: query the generated embeddings (from JSON files or ChromaDB).
 - `src/chat.py`: chat interface with sources from bookmarks
 
+Default Models:
+- Using `all-MiniLM-L6-v2` for embeddings via Hugging Face
+- Using `qwen3:0.6b` thinking model for chat interface locally via Ollama
+
 ## inferbook/src/scraper.py
 
 Scrapes bookmarked pages from an exported bookmarks HTML file and optionally generates sentence embeddings.
 
 ### Requirements
+Install Ollama 
+`curl -fsSL https://ollama.com/install.sh | sh`
 - Python 3.10+
-- Install dependencies (example):
-```bash
-python -m venv env
-source env/bin/activate
-pip install -r requirements.txt
-```
+Install UV https://github.com/astral-sh/uv
 
-If you do not have a `requirements.txt`, minimally install:
+Install dependencies :
 ```bash
-pip install requests beautifulsoup4 sentence-transformers tqdm
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 ### Usage
@@ -136,3 +139,9 @@ The script prints ranked matches with similarity scores, titles, and URLs.
 ```bash
 python src/chat.py
 ```
+
+
+## TODO
+- Add support for reading local files
+This should be simpler as no scraping is required.
+- 
